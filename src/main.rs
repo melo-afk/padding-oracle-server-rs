@@ -1,6 +1,7 @@
 use clap::Parser;
 use log::{info, warn};
 use padding_oracle_server::{encrypt, handle_connection};
+use std::env;
 use std::net::TcpListener;
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -41,8 +42,12 @@ fn main() {
         _ => "trace",
     };
 
-    // Initialize logger
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+    if env::var("RUST_LOG").is_err() {
+        unsafe {
+            env::set_var("RUST_LOG", log_level);
+        }
+    }
+    env_logger::init();
 
     assert!(args.key.len() == 16);
     assert!(args.iv.len() == 16);
