@@ -2,7 +2,7 @@
 name = "padding-oracle-server"
 version = "0.1.0"
 edition = "2024"
-repository = "https://github.com/melo-afk/padding-oracle-rs"
+repository = "https://github.com/melo-afk/padding-oracle-server-rs"
 
 [dependencies]
 anyhow = "1.0"
