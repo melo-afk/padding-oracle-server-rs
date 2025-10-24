@@ -3,6 +3,7 @@ use log::{info, warn};
 use padding_oracle_server::{encrypt, handle_connection};
 use std::env;
 use std::net::TcpListener;
+use std::process::exit;
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Args {
@@ -68,7 +69,16 @@ fn main() {
 
     println!("Note: if you want more verbose output, start the oracle with -v, -vv or -vvv");
 
-    let listener = TcpListener::bind((args.hostname.clone(), args.port)).expect("could not bind");
+    let listener = match TcpListener::bind((args.hostname.clone(), args.port)) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!(
+                "Could not bind to {}:{} due to {}",
+                args.hostname, args.port, e
+            );
+            exit(1)
+        }
+    };
     println!("Ready, listening on {}:{}", args.hostname, args.port);
 
     for stream in listener.incoming() {
@@ -77,7 +87,7 @@ fn main() {
                 info!("Initiated connection");
                 match handle_connection(stream, &key, &iv) {
                     Ok(()) => (),
-                    Err(e) => warn!("Error while handling connection {}", e),
+                    Err(e) => warn!("Error while handling connection: {}", e),
                 };
             }
             Err(_) => warn!("Connection failed"),

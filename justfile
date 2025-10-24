@@ -1,5 +1,5 @@
 run: build
-    ./target/release/padding-oracle-server -vv
+    ./target/release/padding-oracle-server
 
 ambig: build
     ./target/release/padding-oracle-server -a

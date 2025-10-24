@@ -7,6 +7,7 @@ use aes::cipher::{
     consts::{U16, U32},
     generic_array::GenericArray,
 };
+use anyhow::Context;
 use base64::{Engine as _, engine::general_purpose};
 use log::{debug, info};
 use std::{
@@ -16,12 +17,6 @@ use std::{
 
 type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
-
-pub fn decode_b64(to_decode: String) -> Vec<u8> {
-    general_purpose::STANDARD
-        .decode(to_decode)
-        .expect("Could not decode base64")
-}
 
 pub fn encode_b64(to_encode: &Vec<u8>) -> String {
     general_purpose::STANDARD.encode(to_encode)
@@ -107,7 +102,9 @@ pub fn handle_connection(
     stream.set_nodelay(true)?;
 
     let mut keyid = [0; 2];
-    stream.read_exact(&mut keyid).expect("Could not read keyid");
+    stream
+        .read_exact(&mut keyid)
+        .context("Could not read keyid from stream")?;
     info!(
         "Received the keyid {:#x} and ignoring it",
         u16::from_le_bytes(keyid)
@@ -116,12 +113,14 @@ pub fn handle_connection(
     let mut ciphertext = [0u8; 16];
     stream
         .read_exact(&mut ciphertext)
-        .expect("Could not read ciphertext");
+        .context("Could not read ciphertext from stream")?;
     info!("Received the ciphertext");
 
     loop {
         let mut lenb = [0; 2];
-        stream.read_exact(&mut lenb).expect("Could not read len");
+        stream
+            .read_exact(&mut lenb)
+            .context("Could not read len from stream")?;
         let len = u16::from_le_bytes(lenb);
         if len == 0 {
             info!("Closed connection");
@@ -131,7 +130,7 @@ pub fn handle_connection(
         let mut blocks: Vec<u8> = vec![0; len as usize * 16];
         stream
             .read_exact(&mut blocks)
-            .expect("Could not read all blocks");
+            .context("Could not read all blocks from stream")?;
         info!(
             "Received len {}, amount of blocks: {}",
             len,
@@ -152,7 +151,9 @@ pub fn handle_connection(
             }
         }
 
-        stream.write_all(&buf).expect("could not write all");
+        stream
+            .write_all(&buf)
+            .context("Could not write response to stream")?;
         debug!("Sent {} responses", buf.len());
     }
 }
