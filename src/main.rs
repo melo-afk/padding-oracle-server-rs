@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::{info, warn};
+use log::{error, info, warn};
 use padding_oracle_server::{encrypt, handle_connection};
 use std::env;
 use std::net::TcpListener;
@@ -19,7 +19,7 @@ struct Args {
     /// Port to bind to
     port: u16,
 
-    #[arg(long, default_value = "Ich bin ein kla")]
+    #[arg(long, default_value = "foobarfoobarfoobarfoobarfoobarfoobar")]
     /// Plaintext to encrypt
     plaintext: String,
 
@@ -54,12 +54,21 @@ fn main() {
     }
     env_logger::init();
 
-    assert!(args.key.len() == 16);
-    assert!(args.iv.len() == 16);
+    let key: [u8; 16] = match args.key.as_bytes().try_into() {
+        Ok(v) => v,
+        Err(_) => {
+            error!("Could not cast the key into a 16byte slice");
+            exit(1);
+        }
+    };
 
-    let key: [u8; 16] = args.key.as_bytes().try_into().unwrap();
-    let iv: [u8; 16] = args.iv.as_bytes().try_into().unwrap();
-
+    let iv: [u8; 16] = match args.iv.as_bytes().try_into() {
+        Ok(v) => v,
+        Err(_) => {
+            error!("Could not cast the IV into a 16byte slice");
+            exit(1);
+        }
+    };
     encrypt(
         args.plaintext.as_bytes().to_vec(),
         &key,
@@ -85,7 +94,7 @@ fn main() {
         match stream {
             Ok(stream) => {
                 info!("Initiated connection");
-                match handle_connection(stream, &key, &iv) {
+                match handle_connection(stream, &key) {
                     Ok(()) => (),
                     Err(e) => warn!("Error while handling connection: {}", e),
                 };
