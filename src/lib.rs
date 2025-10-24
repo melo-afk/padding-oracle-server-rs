@@ -102,7 +102,6 @@ pub fn handle_connection(
     key_: &[u8; 16],
     iv_: &[u8; 16],
 ) -> anyhow::Result<()> {
-    println!("ggg");
     let key: GenericArray<u8, U16> = GenericArray::clone_from_slice(key_);
     let iv: GenericArray<u8, U16> = GenericArray::clone_from_slice(iv_);
     stream.set_nodelay(true)?;
