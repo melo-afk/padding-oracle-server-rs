@@ -18,17 +18,21 @@ struct Args {
     /// Port to bind to
     port: u16,
 
-    #[arg(long, default_value = "Ich bin ein kleiner plaintext")]
-    /// Hostname to bind to
+    #[arg(long, default_value = "Ich bin ein kla")]
+    /// Plaintext to encrypt
     plaintext: String,
 
     #[arg(short, long, default_value = "AAAAAAAAAAAAAAAA")]
-    /// Hostname to bind to
+    /// Key to use
     key: String,
 
     #[arg(short, long, default_value = "IVIVIVIVIVIVIVIV")]
-    /// Hostname to bind to
+    /// IV to use
     iv: String,
+
+    #[arg(short, long, default_value_t = false)]
+    /// Wheter to use ambiguous padding => ...0x02, 0x01
+    ambiguous: bool,
 }
 
 fn main() {
@@ -55,7 +59,13 @@ fn main() {
     let key: [u8; 16] = args.key.as_bytes().try_into().unwrap();
     let iv: [u8; 16] = args.iv.as_bytes().try_into().unwrap();
 
-    encrypt(args.plaintext.as_bytes().to_vec(), &key, &iv);
+    encrypt(
+        args.plaintext.as_bytes().to_vec(),
+        &key,
+        &iv,
+        args.ambiguous,
+    );
+
     println!("Note: if you want more verbose output, start the oracle with -v, -vv or -vvv");
 
     let listener = TcpListener::bind((args.hostname.clone(), args.port)).expect("could not bind");
