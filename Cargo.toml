@@ -1,0 +1,26 @@
+[package]
+name = "padding-oracle-server"
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/melo-afk/padding-oracle-rs"
+
+[dependencies]
+anyhow = "1.0"
+thiserror = "2.0"
+aes = "0.8.4"
+cbc = "0.1.2"
+hex-literal = "1.0"
+log = "0.4.28"
+clap = { version = "4.5.48", features = ["derive"] }
+env_logger = "0.11"
+base64 = "0.22"
+hex = "0.4.3"
+
+[[bin]]
+name = "padding-oracle-server"
+path = "src/main.rs"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
