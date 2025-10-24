@@ -1,6 +1,6 @@
 [package]
 name = "padding-oracle-server"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 repository = "https://github.com/melo-afk/padding-oracle-server-rs"
 
