@@ -70,23 +70,22 @@ pub fn encrypt(plaintext: Vec<u8>, key_s: &[u8; 16], iv_s: &[u8; 16], ambig: boo
     buf[..pt_len].copy_from_slice(&plaintext);
 
     let mut blocks = to_blocks(buf);
+    if ambig {
+        println!("Note: due to creating ambigous padding, the plaintext is a bit scrambled");
+        let mut first_block = blocks.remove(0);
+        first_block[14] = 0x02;
+        first_block[15] = 0x01;
+        blocks.insert(0, first_block);
+        empty = 1;
+    }
 
-    if empty == 0 || empty == 1 && ambig {
-        // add block with only padding (and maybe ambiguous padding)
+    if empty == 0 {
+        // add block with only padding
         let mut empty_block = GenericArray::clone_from_slice(&[0u8; 16]);
-        if ambig {
-            empty_block[14] = 0x02;
-            empty = 15;
-        }
         Pkcs7::pad(&mut empty_block, empty);
         blocks.push(empty_block);
     } else {
-        // add also some padding
         let mut last_block = blocks.pop().unwrap();
-        if ambig {
-            last_block[14] = 0x02;
-            empty = 1;
-        }
         Pkcs7::pad(&mut last_block, 16 - empty);
         blocks.push(last_block);
     }
@@ -217,7 +216,7 @@ mod tests {
                 "IVIVIVIVIVIVIVIV".as_bytes().try_into()?,
                 true
             ),
-            hex::decode("36d9b28a855f5e7018adcf0ffe304b4ff803ee963c7284addafffe8f8e7e2959")?
+            hex::decode("7a562c14a2313dd349a28eea560130a9")?
         );
         Ok(())
     }
@@ -248,7 +247,7 @@ mod tests {
                 true
             ),
             hex::decode(
-                "36d9b28a855f5e7018adcf0ffe304b4f50dfbdec0ac6bb7aec2657dc2976c6e5e69896cf00e5303b248b80c0a6892cfc"
+                "7a562c14a2313dd349a28eea560130a974836d9d595e2b08bdc6c798232721e9ff75454488f72eaf447d686f0c31119b"
             )?
         );
         Ok(())

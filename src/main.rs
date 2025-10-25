@@ -19,7 +19,7 @@ struct Args {
     /// Port to bind to
     port: u16,
 
-    #[arg(long, default_value = "foobarfoobarfoobarfoobarfoobarfoobar")]
+    #[arg(long, default_value = "Ich bin ein plaintext")]
     /// Plaintext to encrypt
     plaintext: String,
 
