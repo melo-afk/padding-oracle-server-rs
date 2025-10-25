@@ -10,8 +10,8 @@ use aes::cipher::{
 use anyhow::Context;
 use base64::{Engine as _, engine::general_purpose};
 use log::{debug, info};
-use std::{
-    io::{Read, Write},
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
 
@@ -107,13 +107,15 @@ pub fn encrypt(plaintext: Vec<u8>, key_s: &[u8; 16], iv_s: &[u8; 16], ambig: boo
     ciphertext.to_vec()
 }
 
-pub fn handle_connection(mut stream: TcpStream, key_: &[u8; 16]) -> anyhow::Result<()> {
+pub async fn handle_connection(mut stream: TcpStream, key_: &[u8; 16]) -> anyhow::Result<()> {
     let key: GenericArray<u8, U16> = GenericArray::clone_from_slice(key_);
+
     stream.set_nodelay(true)?;
 
     let mut keyid = [0; 2];
     stream
         .read_exact(&mut keyid)
+        .await
         .context("Could not read keyid from stream")?;
     info!(
         "Received the keyid {:#x} and ignoring it",
@@ -123,6 +125,7 @@ pub fn handle_connection(mut stream: TcpStream, key_: &[u8; 16]) -> anyhow::Resu
     let mut ciphertext = [0u8; 16];
     stream
         .read_exact(&mut ciphertext)
+        .await
         .context("Could not read ciphertext from stream")?;
     info!("Received the ciphertext");
 
@@ -130,6 +133,7 @@ pub fn handle_connection(mut stream: TcpStream, key_: &[u8; 16]) -> anyhow::Resu
         let mut lenb = [0; 2];
         stream
             .read_exact(&mut lenb)
+            .await
             .context("Could not read len from stream")?;
         let len = u16::from_le_bytes(lenb);
         if len == 0 {
@@ -140,6 +144,7 @@ pub fn handle_connection(mut stream: TcpStream, key_: &[u8; 16]) -> anyhow::Resu
         let mut blocks: Vec<u8> = vec![0; len as usize * 16];
         stream
             .read_exact(&mut blocks)
+            .await
             .context("Could not read all blocks from stream")?;
         info!("Received {} bytes", blocks.len());
 
@@ -154,8 +159,9 @@ pub fn handle_connection(mut stream: TcpStream, key_: &[u8; 16]) -> anyhow::Resu
         }
         stream
             .write_all(&buf)
+            .await
             .context("Could not write response to stream")?;
-        stream.flush().context("Could not flush the stream")?;
+        stream.flush().await.context("Could not flush the stream")?;
         debug!("Sent {} responses", buf.len());
     }
 }

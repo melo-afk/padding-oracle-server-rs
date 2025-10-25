@@ -15,6 +15,7 @@ clap = { version = "4.5.48", features = ["derive"] }
 env_logger = "0.11"
 base64 = "0.22"
 hex = "0.4.3"
+tokio = { version = "1.47.1", features = ["full"] }
 
 [[bin]]
 name = "padding-oracle-server"
@@ -24,3 +25,8 @@ path = "src/main.rs"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+panic = "abort"
