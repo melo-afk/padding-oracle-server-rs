@@ -1,15 +1,22 @@
 // well. There are new aes & cbc release candidates that would fix
 // the deprecated warning but I didnt get them to work :(
 #![allow(deprecated)]
+use std::collections::HashMap;
+
 use aes::cipher::{
     BlockDecryptMut, BlockEncryptMut, KeyIvInit,
     block_padding::{Padding, Pkcs7},
     consts::U16,
     generic_array::GenericArray,
 };
-use anyhow::Context;
+use anyhow::{Context, bail};
 use base64::{Engine as _, engine::general_purpose};
 use log::{debug, info};
+use rand::seq::IndexedRandom;
+use rand::{Rng, RngCore};
+use serde::{Deserialize, Serialize};
+use std::fs::File;
+use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -20,6 +27,95 @@ type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
 pub fn encode_b64(to_encode: &Vec<u8>) -> String {
     general_purpose::STANDARD.encode(to_encode)
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, Debug)]
+struct RootTest {
+    title: String,
+    description: String,
+    testcases: HashMap<String, TestCase>,
+    expectedResults: HashMap<String, ExpectedResult>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct TestCase {
+    action: String,
+    arguments: TestCaseArgs,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct TestCaseArgs {
+    hostname: String,
+    port: u16,
+    key_id: u16,
+    iv: String,
+    ciphertext: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ExpectedResult {
+    plaintext: String,
+}
+
+pub fn generate_test_cases(hostname: &String, port: u16) {
+    let plaintexts = [
+        "We're no strangers",
+        "to love",
+        "You know the rules and so do I",
+        "A full commitment's what I'm thinkin' of",
+        "You wouldn't get this from any other guy",
+        "Never gonna give you up, never gonna let you down",
+        "Never gonna run around and desert you",
+        "Never gonna make you cry, never gonna say goodbye",
+    ];
+    let mut testcases: HashMap<String, TestCase> = HashMap::new();
+    let mut results: HashMap<String, ExpectedResult> = HashMap::new();
+    let mut keymap: HashMap<u16, [u8; 16]> = HashMap::new();
+
+    for i in 0..10 {
+        let p = match plaintexts.choose(&mut rand::rng()) {
+            Some(v) => *v,
+            None => continue,
+        };
+        let mut key = [0u8; 16];
+        rand::rng().fill_bytes(&mut key);
+
+        let key_id = rand::rng().random_range(..u16::MAX);
+
+        let mut iv = [0u8; 16];
+        rand::rng().fill_bytes(&mut iv);
+
+        let ambig = i % 2 == 0;
+
+        let (plain, cipher, iv) = encrypt(p.into(), &key, &iv, ambig);
+        keymap.insert(key_id, key);
+
+        testcases.insert(
+            format!("case{}", i),
+            TestCase {
+                action: "padding_oracle".to_string(),
+                arguments: TestCaseArgs {
+                    hostname: hostname.to_string(),
+                    port,
+                    key_id,
+                    iv,
+                    ciphertext: cipher,
+                },
+            },
+        );
+        results.insert(format!("case{}", i), ExpectedResult { plaintext: plain });
+    }
+    let root = RootTest {
+        title: "Some padding oracle cases".to_string(),
+        description: "padding oracle".to_string(),
+        testcases,
+        expectedResults: results,
+    };
+    let testcases_file = File::create("testcases.json").unwrap();
+    let keys_file: File = File::create("keys.json").unwrap();
+    serde_json::to_writer_pretty(testcases_file, &root).unwrap();
+    serde_json::to_writer_pretty(keys_file, &keymap).unwrap();
 }
 
 fn to_blocks(data: Vec<u8>) -> Vec<GenericArray<u8, U16>> {
@@ -54,7 +150,12 @@ fn oracle(iv_bytes: &[u8], block_bytes: &[u8], key: &GenericArray<u8, U16>) -> b
     false
 }
 
-pub fn encrypt(plaintext: Vec<u8>, key_s: &[u8; 16], iv_s: &[u8; 16], ambig: bool) -> Vec<u8> {
+pub fn encrypt(
+    plaintext: Vec<u8>,
+    key_s: &[u8; 16],
+    iv_s: &[u8; 16],
+    ambig: bool,
+) -> (String, String, String) {
     let key: GenericArray<u8, U16> = GenericArray::clone_from_slice(key_s);
     let iv: GenericArray<u8, U16> = if ambig {
         GenericArray::clone_from_slice(&[0u8; 16])
@@ -91,25 +192,35 @@ pub fn encrypt(plaintext: Vec<u8>, key_s: &[u8; 16], iv_s: &[u8; 16], ambig: boo
     }
     let plain = join_blocks(&blocks);
     println!("--- Used IV--- ");
-    println!("b64: {}", encode_b64(&iv.to_vec()));
+    let b64_iv = encode_b64(&iv.to_vec());
+    println!("b64: {}", b64_iv);
     println!("hex: {}", hex::encode(iv));
     println!("\n--- Padded Plaintext --- ");
     println!("UTF8: {:?}", String::from_utf8_lossy(&plain));
-    println!("b64 : {}", encode_b64(&plain));
+    let b64_plaintext = encode_b64(&plain);
+    println!("b64 : {}", b64_plaintext);
     println!("hex : {}", hex::encode(plain));
 
     Aes128CbcEnc::new(&key, &iv).encrypt_blocks_mut(&mut blocks);
 
     let ciphertext = join_blocks(&blocks);
     println!("\n--- Ciphertext --- ");
-    println!("b64: {}", encode_b64(&ciphertext));
+    let b64_ciphertext = encode_b64(&ciphertext);
+    println!("b64: {}", b64_ciphertext);
     println!("hex: {}\n", hex::encode(&ciphertext));
-    ciphertext.to_vec()
+    (b64_plaintext, b64_ciphertext, b64_iv)
 }
 
-pub async fn handle_connection(mut stream: TcpStream, key_: &[u8; 16]) -> anyhow::Result<()> {
-    let key: GenericArray<u8, U16> = GenericArray::clone_from_slice(key_);
+#[derive(Error, Debug)]
+pub enum ConnectionError {
+    #[error("Requested keyid {keyid} is not in the map")]
+    KeyNotInMapError { keyid: u16 },
+}
 
+pub async fn handle_connection(
+    mut stream: TcpStream,
+    keymap: HashMap<u16, [u8; 16]>,
+) -> anyhow::Result<()> {
     stream.set_nodelay(true)?;
 
     let mut keyid = [0; 2];
@@ -117,10 +228,16 @@ pub async fn handle_connection(mut stream: TcpStream, key_: &[u8; 16]) -> anyhow
         .read_exact(&mut keyid)
         .await
         .context("Could not read keyid from stream")?;
-    info!(
-        "Received the keyid {:#x} and ignoring it",
-        u16::from_le_bytes(keyid)
-    );
+    info!("Received the keyid {:#x}", u16::from_le_bytes(keyid));
+
+    let key_ = match keymap.get(&u16::from_le_bytes(keyid)) {
+        Some(v) => v,
+        None => bail!(ConnectionError::KeyNotInMapError {
+            keyid: u16::from_le_bytes(keyid)
+        }),
+    };
+
+    let key: GenericArray<u8, U16> = GenericArray::clone_from_slice(key_);
 
     let mut ciphertext = [0u8; 16];
     stream
@@ -182,8 +299,9 @@ mod tests {
                 "AAAAAAAAAAAAAAAA".as_bytes().try_into()?,
                 "AAAAAAAAAAAAAAAA".as_bytes().try_into()?,
                 true
-            ),
-            hex::decode("fdf1300041242cd95922eb1e3bbd09c4")?
+            )
+            .1,
+            "/fEwAEEkLNlZIuseO70JxA=="
         );
         assert_eq!(
             encrypt(
@@ -191,8 +309,9 @@ mod tests {
                 "AAAAAAAAAAAAAAAA".as_bytes().try_into()?,
                 "IVIVIVIVIVIVIVIV".as_bytes().try_into()?,
                 false
-            ),
-            hex::decode("1c213765dd74f0a23ea260473f583933")?
+            )
+            .1,
+            "HCE3Zd108KI+omBHP1g5Mw=="
         );
         Ok(())
     }
@@ -206,8 +325,9 @@ mod tests {
                 "AAAAAAAAAAAAAAAA".as_bytes().try_into()?,
                 "IVIVIVIVIVIVIVIV".as_bytes().try_into()?,
                 false
-            ),
-            hex::decode("1c213765dd74f0a23ea260473f583933")?
+            )
+            .1,
+            "HCE3Zd108KI+omBHP1g5Mw=="
         );
         Ok(())
     }
@@ -221,8 +341,9 @@ mod tests {
                 "AAAAAAAAAAAAAAAA".as_bytes().try_into()?,
                 "IVIVIVIVIVIVIVIV".as_bytes().try_into()?,
                 true
-            ),
-            hex::decode("7a562c14a2313dd349a28eea560130a9")?
+            )
+            .1,
+            "elYsFKIxPdNJoo7qVgEwqQ=="
         );
         Ok(())
     }
@@ -236,8 +357,9 @@ mod tests {
                 "AAAAAAAAAAAAAAAA".as_bytes().try_into()?,
                 "IVIVIVIVIVIVIVIV".as_bytes().try_into()?,
                 false
-            ),
-            hex::decode("75fd6b55417b39fff95e3728c7edf41fce87b8fb37c82a0ec465d2b31ae351e4")?
+            )
+            .1,
+            "df1rVUF7Of/5Xjcox+30H86HuPs3yCoOxGXSsxrjUeQ="
         );
         Ok(())
     }
@@ -251,10 +373,9 @@ mod tests {
                 "AAAAAAAAAAAAAAAA".as_bytes().try_into()?,
                 "IVIVIVIVIVIVIVIV".as_bytes().try_into()?,
                 true
-            ),
-            hex::decode(
-                "7a562c14a2313dd349a28eea560130a974836d9d595e2b08bdc6c798232721e9ff75454488f72eaf447d686f0c31119b"
-            )?
+            )
+            .1,
+            "elYsFKIxPdNJoo7qVgEwqXSDbZ1ZXisIvcbHmCMnIen/dUVEiPcur0R9aG8MMRGb",
         );
         Ok(())
     }
@@ -268,10 +389,9 @@ mod tests {
                 "AAAAAAAAAAAAAAAA".as_bytes().try_into()?,
                 "IVIVIVIVIVIVIVIV".as_bytes().try_into()?,
                 false
-            ),
-            hex::decode(
-                "75fd6b55417b39fff95e3728c7edf41fb220e23d54e0bec6e41c2fc23a5031770289e2de460a62c1c570264fa3619866"
-            )?
+            )
+            .1,
+            "df1rVUF7Of/5Xjcox+30H7Ig4j1U4L7G5BwvwjpQMXcCieLeRgpiwcVwJk+jYZhm",
         );
         Ok(())
     }
