@@ -1,9 +1,13 @@
 use clap::Parser;
 use log::{error, info, warn};
-use padding_oracle_server::{encrypt, handle_connection};
+use padding_oracle_server::{encrypt, generate_test_cases, handle_connection};
+use std::collections::HashMap;
 use std::env;
-use std::net::TcpListener;
 use std::process::exit;
+use tokio::net::TcpListener;
+
+use std::fs::File;
+
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Args {
@@ -11,7 +15,7 @@ struct Args {
     /// Increase verbosity (-v, -vv, -vvv)
     verbose: u8,
 
-    #[arg(long, default_value = "localhost")]
+    #[arg(long, default_value = "0.0.0.0")]
     /// Hostname to bind to
     hostname: String,
 
@@ -34,9 +38,18 @@ struct Args {
     #[arg(short, long, default_value_t = false)]
     /// Wheter to use ambiguous padding => ...0x02, 0x01
     ambiguous: bool,
+
+    #[arg(short, long, default_value_t = false)]
+    /// Generates testcases, a keymap and exits
+    generate_tests: bool,
+
+    #[arg(short, long, default_value_t = false)]
+    /// Run as a server with different keys & keyids
+    serve: bool,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args = Args::parse();
 
     // Map v counts to log levels
@@ -69,16 +82,33 @@ fn main() {
             exit(1);
         }
     };
-    encrypt(
-        args.plaintext.as_bytes().to_vec(),
-        &key,
-        &iv,
-        args.ambiguous,
-    );
 
     println!("Note: if you want more verbose output, start the oracle with -v, -vv or -vvv");
 
-    let listener = match TcpListener::bind((args.hostname.clone(), args.port)) {
+    if args.generate_tests {
+        generate_test_cases(&args.hostname, args.port);
+        exit(0);
+    }
+
+    let keymap: HashMap<u16, [u8; 16]> = if args.serve {
+        let file = File::open("keys.json").unwrap();
+        serde_json::from_reader(file).unwrap()
+    } else {
+        let mut nmap: HashMap<u16, [u8; 16]> = HashMap::new();
+        nmap.insert(0, key);
+        nmap
+    };
+
+    if !args.serve {
+        encrypt(
+            args.plaintext.as_bytes().to_vec(),
+            &key,
+            &iv,
+            args.ambiguous,
+        );
+    }
+
+    let listener = match TcpListener::bind((args.hostname.clone(), args.port)).await {
         Ok(l) => l,
         Err(e) => {
             eprintln!(
@@ -89,17 +119,21 @@ fn main() {
         }
     };
     println!("Ready, listening on {}:{}", args.hostname, args.port);
-
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                info!("Initiated connection");
-                match handle_connection(stream, &key) {
-                    Ok(()) => (),
-                    Err(e) => warn!("Error while handling connection: {}", e),
-                };
+    loop {
+        let (stream, addr) = match listener.accept().await {
+            Ok((s, a)) => (s, a),
+            Err(e) => {
+                warn!("Error while accepting connection connection: {}", e);
+                continue;
             }
-            Err(_) => warn!("Connection failed"),
-        }
+        };
+        info!("Initiated connection with {}", addr);
+        let kmap = keymap.clone();
+        tokio::spawn(async move {
+            match handle_connection(stream, kmap).await {
+                Ok(()) => (),
+                Err(e) => warn!("Error while handling connection with {}: {}", addr, e),
+            };
+        });
     }
 }
