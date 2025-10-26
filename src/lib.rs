@@ -1,8 +1,6 @@
 // well. There are new aes & cbc release candidates that would fix
 // the deprecated warning but I didnt get them to work :(
 #![allow(deprecated)]
-use std::collections::HashMap;
-
 use aes::cipher::{
     BlockDecryptMut, BlockEncryptMut, KeyIvInit,
     block_padding::{Padding, Pkcs7},
@@ -15,7 +13,8 @@ use log::{debug, info};
 use rand::seq::IndexedRandom;
 use rand::{Rng, RngCore};
 use serde::{Deserialize, Serialize};
-use std::fs::File;
+use std::collections::HashMap;
+use std::fs;
 use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -58,7 +57,12 @@ struct ExpectedResult {
     plaintext: String,
 }
 
-pub fn generate_test_cases(hostname: &String, port: u16) {
+pub fn generate_test_cases(
+    hostname: &String,
+    port: u16,
+    path_testcases: String,
+    path_keymap: String,
+) -> anyhow::Result<()> {
     let plaintexts = [
         "We're no strangers",
         "to love",
@@ -112,10 +116,13 @@ pub fn generate_test_cases(hostname: &String, port: u16) {
         testcases,
         expectedResults: results,
     };
-    let testcases_file = File::create("testcases.json").unwrap();
-    let keys_file: File = File::create("keys.json").unwrap();
-    serde_json::to_writer_pretty(testcases_file, &root).unwrap();
-    serde_json::to_writer_pretty(keys_file, &keymap).unwrap();
+    let testcases_file =
+        fs::File::create(path_testcases).context("Could not create testcase file")?;
+    let keys_file: fs::File =
+        fs::File::create(path_keymap).context("Could not create keymap file")?;
+    serde_json::to_writer_pretty(testcases_file, &root)?;
+    serde_json::to_writer_pretty(keys_file, &keymap)?;
+    Ok(())
 }
 
 fn to_blocks(data: Vec<u8>) -> Vec<GenericArray<u8, U16>> {
@@ -220,6 +227,7 @@ pub enum ConnectionError {
 pub async fn handle_connection(
     mut stream: TcpStream,
     keymap: HashMap<u16, [u8; 16]>,
+    serve: bool,
 ) -> anyhow::Result<()> {
     stream.set_nodelay(true)?;
 
@@ -229,6 +237,11 @@ pub async fn handle_connection(
         .await
         .context("Could not read keyid from stream")?;
     info!("Received the keyid {:#x}", u16::from_le_bytes(keyid));
+
+    // when it's not in serve mode, the key is stored at index 0
+    if !serve {
+        keyid = [0; 2];
+    }
 
     let key_ = match keymap.get(&u16::from_le_bytes(keyid)) {
         Some(v) => v,

@@ -3,10 +3,9 @@ use log::{error, info, warn};
 use padding_oracle_server::{encrypt, generate_test_cases, handle_connection};
 use std::collections::HashMap;
 use std::env;
+use std::fs::File;
 use std::process::exit;
 use tokio::net::TcpListener;
-
-use std::fs::File;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -27,11 +26,11 @@ struct Args {
     /// Plaintext to encrypt
     plaintext: String,
 
-    #[arg(short, long, default_value = "AAAAAAAAAAAAAAAA")]
+    #[arg(long, default_value = "AAAAAAAAAAAAAAAA")]
     /// Key to use
     key: String,
 
-    #[arg(short, long, default_value = "IVIVIVIVIVIVIVIV")]
+    #[arg(long, default_value = "IVIVIVIVIVIVIVIV")]
     /// IV to use
     iv: String,
 
@@ -46,6 +45,19 @@ struct Args {
     #[arg(short, long, default_value_t = false)]
     /// Run as a server with different keys & keyids
     serve: bool,
+
+    #[arg(
+        short,
+        long,
+        required_if_eq("generate_tests", "true"),
+        required_if_eq("serve", "true")
+    )]
+    /// In / Output of the keymap file [required with: -g, -s]
+    key_map: Option<String>,
+
+    #[arg(short, long, required_if_eq("generate_tests", "true"))]
+    /// Output of test case file [required with: -g]
+    test_cases: Option<String>,
 }
 
 #[tokio::main]
@@ -86,12 +98,28 @@ async fn main() {
     println!("Note: if you want more verbose output, start the oracle with -v, -vv or -vvv");
 
     if args.generate_tests {
-        generate_test_cases(&args.hostname, args.port);
-        exit(0);
+        match generate_test_cases(
+            &args.hostname,
+            args.port,
+            args.key_map.unwrap(),
+            args.test_cases.unwrap(),
+        ) {
+            Ok(()) => exit(0),
+            Err(e) => {
+                warn!("Could not generate test cases: {}", e);
+                exit(1);
+            }
+        }
     }
 
     let keymap: HashMap<u16, [u8; 16]> = if args.serve {
-        let file = File::open("keys.json").unwrap();
+        let file = match File::open(args.key_map.unwrap()) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Could not open the keymap file: {}", e);
+                exit(1);
+            }
+        };
         serde_json::from_reader(file).unwrap()
     } else {
         let mut nmap: HashMap<u16, [u8; 16]> = HashMap::new();
@@ -100,6 +128,7 @@ async fn main() {
     };
 
     if !args.serve {
+        println!("Note: the KeyId is ignored in this mode");
         encrypt(
             args.plaintext.as_bytes().to_vec(),
             &key,
@@ -130,7 +159,7 @@ async fn main() {
         info!("Initiated connection with {}", addr);
         let kmap = keymap.clone();
         tokio::spawn(async move {
-            match handle_connection(stream, kmap).await {
+            match handle_connection(stream, kmap, args.serve).await {
                 Ok(()) => (),
                 Err(e) => warn!("Error while handling connection with {}: {}", addr, e),
             };
