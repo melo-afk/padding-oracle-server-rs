@@ -101,8 +101,8 @@ async fn main() {
         match generate_test_cases(
             &args.hostname,
             args.port,
-            args.key_map.unwrap(),
             args.test_cases.unwrap(),
+            args.key_map.unwrap(),
         ) {
             Ok(()) => exit(0),
             Err(e) => {
